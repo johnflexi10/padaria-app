@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Padaria - Controle de Clientes</title>
+
+    <!-- Firebase SDK -->
+    <script type="module">
+      // Importação das funções do Firebase
+      import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+      import { 
+          getFirestore, 
+          collection, 
+          addDoc, 
+          getDocs, 
+          query, 
+          where, 
+          orderBy, 
+          Timestamp 
+      } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+      // Configuração do Firebase
+      const firebaseConfig = {
+          apiKey: "AIzaSyC95jwjqfKsWg6Uk39_5RR1ZbJl8Mx93ok",
+          authDomain: "meu-projeto-1d9b9.firebaseapp.com",
+          projectId: "meu-projeto-1d9b9",
+          storageBucket: "meu-projeto-1d9b9.firebasestorage.app",
+          messagingSenderId: "22706517256",
+          appId: "1:22706517256:web:1ab86b8a7fcdd2328868bd",
+          measurementId: "G-T7R2HVGEPL"
+      };
+
+      // Inicialização do Firebase
+      const app = initializeApp(firebaseConfig);
+      const db = getFirestore(app);
+
+      // Elementos do DOM
+      const expenseForm = document.getElementById('expense-form');
+      const clientNameInput = document.getElementById('client-name');
+      const expenseDateInput = document.getElementById('expense-date');
+      const expenseValueInput = document.getElementById('expense-value');
+      const paymentMethodInput = document.getElementById('payment-method');
+      const expenseDescriptionInput = document.getElementById('expense-description');
+      const expensesDataTable = document.getElementById('expenses-data');
+      const filterPeriodSelect = document.getElementById('filter-period');
+      const filterStartDateInput = document.getElementById('filter-start-date');
+      const filterEndDateInput = document.getElementById('filter-end-date');
+      const customDateContainer = document.getElementById('custom-date-container');
+      const customDateEndContainer = document.getElementById('custom-date-end-container');
+      const filterClientInput = document.getElementById('filter-client');
+      const filterPaymentSelect = document.getElementById('filter-payment');
+      const applyFiltersButton = document.getElementById('apply-filters');
+      const totalAmountElement = document.getElementById('total-amount');
+      const averagePerClientElement = document.getElementById('average-per-client');
+      const totalCashElement = document.getElementById('total-cash');
+      const totalCardElement = document.getElementById('total-card');
+
+      // Definir data atual como padrão no formulário
+      const today = new Date();
+      const formattedToday = today.toISOString().split('T')[0];
+      expenseDateInput.value = formattedToday;
+
+      // Mostrar/ocultar campos de data personalizada
+      filterPeriodSelect.addEventListener('change', function() {
+          if (this.value === 'custom') {
+              customDateContainer.style.display = 'block';
+              customDateEndContainer.style.display = 'block';
+          } else {
+              customDateContainer.style.display = 'none';
+              customDateEndContainer.style.display = 'none';
+          }
+      });
+
+      // Função para calcular as datas do período selecionado
+      function getDateRange(periodType) {
+          const now = new Date();
+          const startDate = new Date();
+          const endDate = new Date();
+
+          switch (periodType) {
+              case 'day':
+                  // Hoje
+                  startDate.setHours(0, 0, 0, 0);
+                  endDate.setHours(23, 59, 59, 999);
+                  break;
+              case 'week':
+                  // Esta semana (domingo a sábado)
+                  startDate.setDate(now.getDate() - now.getDay());
+                  startDate.setHours(0, 0, 0, 0);
+                  endDate.setDate(now.getDate() + (6 - now.getDay()));
+                  endDate.setHours(23, 59, 59, 999);
+                  break;
+              case 'month':
+                  // Este mês
+                  startDate.setDate(1);
+                  startDate.setHours(0, 0, 0, 0);
+                  endDate.setMonth(now.getMonth() + 1, 0);
+                  endDate.setHours(23, 59, 59, 999);
+                  break;
+              case 'year':
+                  // Este ano
+                  startDate.setMonth(0, 1);
+                  startDate.setHours(0, 0, 0, 0);
+                  endDate.setMonth(11, 31);
+                  endDate.setHours(23, 59, 59, 999);
+                  break;
+              case 'custom':
+                  // Período personalizado (as datas serão definidas pelo usuário)
+                  startDate.setTime(new Date(filterStartDateInput.value).getTime());
+                  endDate.setTime(new Date(filterEndDateInput.value).getTime());
+                  break;
+              default:
+                  // Caso padrão (hoje)
+                  startDate.setHours(0, 0, 0, 0);
+                  endDate.setHours(23, 59, 59, 999);
+                  break;
+          }
+
+          return { startDate, endDate };
+      }
+
+      // Função para adicionar um novo gasto ao Firebase
+      async function addExpense(e) {
+          e.preventDefault();
+
+          try {
+              // Coletar dados do formulário
+              const clientName = clientNameInput.value.trim();
+              const expenseDate = new Date(expenseDateInput.value);
+              const expenseValue = parseFloat(expenseValueInput.value);
+              const paymentMethod = paymentMethodInput.value;
+              const description = expenseDescriptionInput.value.trim();
+
+              // Adicionar gasto ao Firestore
+              await addDoc(collection(db, "expenses"), {
+                  clientName: clientName,
+                  date: Timestamp.fromDate(expenseDate),
+                  value: expenseValue,
+                  paymentMethod: paymentMethod,
+                  description: description,
+                  createdAt: Timestamp.now()
+              });
+
+              // Limpar formulário
+              expenseForm.reset();
+              expenseDateInput.value = formattedToday;
+
+              // Recarregar dados
+              await loadExpenses();
+
+              // Feedback ao usuário
+              alert("Gasto registrado com sucesso!");
+          } catch (error) {
+              console.error("Erro ao adicionar gasto:", error);
+              alert("Erro ao registrar gasto: " + error.message);
+          }
+      }
+
+      // Função para carregar os gastos do Firestore
+      async function loadExpenses() {
+          try {
+              const periodType = filterPeriodSelect.value;
+              const { startDate, endDate } = getDateRange(periodType);
+
+              // Consulta ao Firestore
+              const expensesQuery = query(
+                  collection(db, "expenses"),
+                  where("date", ">=", Timestamp.fromDate(startDate)),
+                  where("date", "<=", Timestamp.fromDate(endDate)),
+                  orderBy("date", "desc")
+              );
+
+              const querySnapshot = await getDocs(expensesQuery);
+              const expenses = [];
+              let totalAmount = 0;
+              let totalCash = 0;
+              let totalCard = 0;
+              const clients = new Set();
+
+              querySnapshot.forEach((doc) => {
+                  const data = doc.data();
+                  expenses.push(data);
+                  totalAmount += data.value;
+                  if (data.paymentMethod === "Dinheiro") {
+                      totalCash += data.value;
+                  } else if (data.paymentMethod.includes("Cartão")) {
+                      totalCard += data.value;
+                  }
+                  clients.add(data.clientName);
+              });
+
+              // Atualizar a tabela de gastos
+              expensesDataTable.innerHTML = '';
+              expenses.forEach((expense) => {
+                  const row = document.createElement('tr');
+                  row.innerHTML = `
+                      <td>${expense.date.toDate().toLocaleDateString()}</td>
+                      <td>${expense.clientName}</td>
+                      <td>R$ ${expense.value.toFixed(2)}</td>
+                      <td>${expense.paymentMethod}</td>
+                      <td>${expense.description || ''}</td>
+                  `;
+                  expensesDataTable.appendChild(row);
+              });
+
+              // Atualizar o resumo
+              totalAmountElement.textContent = `R$ ${totalAmount.toFixed(2)}`;
+              averagePerClientElement.textContent = `R$ ${(totalAmount / clients.size).toFixed(2)}`;
+              totalCashElement.textContent = `R$ ${totalCash.toFixed(2)}`;
+              totalCardElement.textContent = `R$ ${totalCard.toFixed(2)}`;
+          } catch (error) {
+              console.error("Erro ao carregar gastos:", error);
+              alert("Erro ao carregar gastos: " + error.message);
+          }
+      }
+
+      // Evento de envio do formulário
+      expenseForm.addEventListener('submit', addExpense);
+
+      // Evento de aplicação dos filtros
+      applyFiltersButton.addEventListener('click', loadExpenses);
+
+      // Carregar os gastos ao carregar a página
+      window.addEventListener('load', loadExpenses);
+    </script>
+
+    <style media="screen">
+      /* Estilos CSS /* Reset básico e estilos gerais */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            background-color: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 10px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+
+        header h1 {
+            color: #b67a44;
+            margin-bottom: 10px;
+        }
+
+        /* Formulário de registro */
+        .form-container {
+            background-color: #f9f3eb;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 30px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+
+        input, select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+
+        button {
+            background-color: #b67a44;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #95613a;
+        }
+
+        /* Filtros */
+        .filters {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #f0f0f0;
+            border-radius: 8px;
+        }
+
+        .filter-group {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        /* Tabela de dados */
+        .data-container {
+            overflow-x: auto;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background-color: #b67a44;
+            color: white;
+        }
+
+        tr:hover {
+            background-color: #f9f3eb;
+        }
+
+        /* Resumo de dados */
+        .summary {
+            margin-top: 30px;
+            padding: 20px;
+            background-color: #f9f3eb;
+            border-radius: 8px;
+        }
+
+        .summary h3 {
+            margin-bottom: 15px;
+            color: #b67a44;
+        }
+
+        .summary-data {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 20px;
+        }
+
+        .summary-item {
+            flex: 1;
+            min-width: 150px;
+            padding: 15px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+
+        .summary-item h4 {
+            margin-bottom: 10px;
+            color: #666;
+        }
+
+        .summary-item p {
+            font-size: 24px;
+            font-weight: 600;
+            color: #b67a44;
+        }
+
+        /* Responsividade */
+        @media (max-width: 768px) {
+            .form-container, .filters {
+                flex-direction: column;
+            }
+            
+            .filter-group, .form-group {
+                width: 100%;
+            }
+        } 
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+          <h1>Padaria - Controle de Clientes</h1>
+          <p>Registre e acompanhe os gastos dos clientes</p>
+      </header>
+
+      <div class="form-container">
+          <h2>Registrar Novo Gasto</h2>
+          <form id="expense-form">
+              <div class="form-group">
+                  <label for="client-name">Nome do Cliente:</label>
+                  <input type="text" id="client-name" required>
+              </div>
+              <div class="form-group">
+                  <label for="expense-date">Data:</label>
+                  <input type="date" id="expense-date" required>
+              </div>
+              <div class="form-group">
+                  <label for="expense-value">Valor (R$):</label>
+                  <input type="number" id="expense-value" step="0.01" min="0" required>
+              </div>
+              <div class="form-group">
+                  <label for="payment-method">Forma de Pagamento:</label>
+                  <select id="payment-method" required>
+                      <option value="">Selecione</option>
+                      <option value="Dinheiro">Dinheiro</option>
+                      <option value="Cartão de Crédito">Cartão de Crédito</option>
+                      <option value="Cartão de Débito">Cartão de Débito</option>
+                      <option value="Pix">Pix</option>
+                      <option value="Fiado">Fiado</option>
+                  </select>
+              </div>
+              <div class="form-group">
+                  <label for="expense-description">Descrição (opcional):</label>
+                  <input type="text" id="expense-description">
+              </div>
+              <button type="submit">Registrar Gasto</button>
+          </form>
+      </div>
+
+      <div class="filters">
+          <div class="filter-group">
+              <label for="filter-period">Filtrar por Período:</label>
+              <select id="filter-period">
+                  <option value="day">Hoje</option>
+                  <option value="week" selected>Esta Semana</option>
+                  <option value="month">Este Mês</option>
+                  <option value="year">Este Ano</option>
+                  <option value="custom">Período Personalizado</option>
+              </select>
+          </div>
+          <div class="filter-group" id="custom-date-container" style="display: none;">
+              <label for="filter-start-date">Data Inicial:</label>
+              <input type="date" id="filter-start-date">
+          </div>
+          <div class="filter-group" id="custom-date-end-container" style="display: none;">
+              <label for="filter-end-date">Data Final:</label>
+              <input type="date" id="filter-end-date">
+          </div>
+          <div class="filter-group">
+              <label for="filter-client">Cliente:</label>
+              <input type="text" id="filter-client" placeholder="Todos os clientes">
+          </div>
+          <div class="filter-group">
+              <label for="filter-payment">Forma de Pagamento:</label>
+              <select id="filter-payment">
+                  <option value="">Todas</option>
+                  <option value="Dinheiro">Dinheiro</option>
+                  <option value="Cartão de Crédito">Cartão de Crédito</option>
+                  <option value="Cartão de Débito">Cartão de Débito</option>
+                  <option value="Pix">Pix</option>
+                  <option value="Fiado">Fiado</option>
+              </select>
+          </div>
+          <div class="filter-group">
+              <button id="apply-filters" style="margin-top: 22px;">Aplicar Filtros</button>
+          </div>
+      </div>
+
+      <div class="data-container">
+          <h2>Gastos Registrados</h2>
+          <table id="expenses-table">
+              <thead>
+                  <tr>
+                      <th>Data</th>
+                      <th>Cliente</th>
+                      <th>Valor</th>
+                      <th>Pagamento</th>
+                      <th>Descrição</th>
+                  </tr>
+              </thead>
+              <tbody id="expenses-data">
+                  <!-- Dados serão inseridos dinamicamente aqui -->
+              </tbody>
+          </table>
+      </div>
+
+      <div class="summary">
+          <h3>Resumo</h3>
+          <div class="summary-data">
+              <div class="summary-item">
+                  <h4>Total do Período</h4>
+                  <p id="total-amount">R$ 0,00</p>
+              </div>
+              <div class="summary-item">
+                  <h4>Média por Cliente</h4>
+                  <p id="average-per-client">R$ 0,00</p>
+              </div>
+              <div class="summary-item">
+                  <h4>Total em Dinheiro</h4>
+                  <p id="total-cash">R$ 0,00</p>
+              </div>
+              <div class="summary-item">
+                  <h4>Total em Cartões</h4>
+                  <p id="total-card">R$ 0,00</p>
+              </div>
+          </div>
+      </div>
+    </div>
+  </body>
